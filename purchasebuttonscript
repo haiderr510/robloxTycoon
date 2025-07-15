@@ -1,0 +1,92 @@
+local button = script.Parent -- Assuming this script is inside the button part
+local debounce = false
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+
+-- Get the car model from ReplicatedStorage
+local carTemplate = ReplicatedStorage:FindFirstChild("Model")
+if not carTemplate then
+	warn("CarTemplate model not found in ReplicatedStorage")
+	return
+else
+	print("CarTemplate found!")
+end
+
+-- Get the garage part inside plotOne
+local plotOne = Workspace:WaitForChild("plotOne")
+local garagePart = plotOne:WaitForChild("garage")
+
+button.Touched:Connect(function(hit)
+	print("Button touched by:", hit.Name)
+
+	if debounce then
+		print("Debounce active, ignoring touch")
+		return
+	end
+
+	if not hit or not hit.Parent then
+		print("No hit or hit.Parent")
+		return
+	end
+
+	local character = hit.Parent
+	local player = Players:GetPlayerFromCharacter(character)
+	if not player then
+		print("No player found from character")
+		return
+	end
+	print("Player detected:", player.Name)
+
+	local leaderstats = player:FindFirstChild("leaderstats")
+	if not leaderstats then
+		print("No leaderstats found")
+		return
+	end
+
+	local money = leaderstats:FindFirstChild("Money")
+	if not money then
+		print("No Money stat found")
+		return
+	end
+
+	print("Player money:", money.Value)
+
+	if money.Value >= 0 then -- Change this value to actual cost
+		print("Enough money, processing purchase")
+		debounce = true
+
+		money.Value -= 0 -- Change this value to actual cost
+		print("Money deducted, spawning car")
+
+		local car = carTemplate:Clone()
+		if not car.PrimaryPart then
+			warn("Set PrimaryPart on CarTemplate model")
+			debounce = false
+			return
+		end
+
+		-- Calculate spawn position on top of the garage
+		local garageCFrame = garagePart.CFrame
+		local garageSizeY = garagePart.Size.Y
+		local carSizeY = car:GetExtentsSize().Y
+
+		local spawnHeightOffset = (garageSizeY / 2) + (carSizeY / 2)
+		local spawnCFrame = garageCFrame * CFrame.new(0, spawnHeightOffset, 0)
+
+		car:SetPrimaryPartCFrame(spawnCFrame)
+		car.Parent = Workspace
+
+		-- Destroy all children of the button (e.g., text, decals)
+		for _, child in ipairs(button:GetChildren()) do
+			child:Destroy()
+		end
+
+		-- Make button itself invisible and non-collidable
+		button.Transparency = 1
+		button.CanCollide = false
+	else
+		print(player.Name .. " tried to purchase but doesn't have enough money!")
+	end
+end)
