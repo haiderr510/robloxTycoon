@@ -1,0 +1,169 @@
+-- NPC Ice Cream Customer Logic with Animations
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local PathfindingService = game:GetService("PathfindingService")
+
+local plazaPark = workspace:WaitForChild("Plaza Park")
+local sellArea = plazaPark:WaitForChild("Sell Area")
+
+local playersWithCustomers = {}
+local activeNPCs = {}
+local SPEED_LIMIT = 10
+
+-- Helper: Get the seat in the player's car
+local function getSeatForPlayer(player)
+	for _, model in ipairs(workspace:GetChildren()) do
+		if model:IsA("Model") and model.Name == player.Name .. "'s Car" then
+			local seat = model:FindFirstChild("DriveSeat")
+			if seat and seat:IsA("VehicleSeat") then
+				return seat
+			end
+		end
+	end
+	return nil
+end
+
+local function addMoneyToPlayer(player, amount)
+	local stats = player:FindFirstChild("leaderstats")
+	local money = stats and stats:FindFirstChild("Money")
+	if money then
+		money.Value += amount
+		print("✅ $" .. amount .. " added to " .. player.Name)
+	else
+		warn("⚠️ Leaderstats or Money missing for " .. player.Name)
+	end
+end
+
+local function playAnimation(humanoid, animId)
+	local animator = humanoid:FindFirstChildOfClass("Animator")
+	if not animator then
+		animator = Instance.new("Animator")
+		animator.Parent = humanoid
+	end
+
+	local animation = Instance.new("Animation")
+	animation.AnimationId = animId
+	local track = animator:LoadAnimation(animation)
+	track:Play()
+	return track
+end
+
+-- Helper: Get a position near the target, at a given radius
+local function getPositionNearTarget(fromPos, targetPos, radius)
+	local direction = (targetPos - fromPos)
+	local distance = direction.Magnitude
+	if distance <= radius then
+		-- Already within radius, stay at current position
+		return fromPos
+	end
+	direction = direction.Unit
+	return targetPos - direction * radius
+end
+
+-- NPC pathfind with animation, stopping within a radius of the target
+local function pathfindToTarget(npcModel, targetPos, stopRadius)
+	local humanoid = npcModel:FindFirstChildOfClass("Humanoid")
+	local rootPart = npcModel.PrimaryPart
+	if not humanoid or not rootPart then
+		warn("[Pathfinding] NPC missing Humanoid or PrimaryPart")
+		return false
+	end
+
+	humanoid.WalkSpeed = 13
+	humanoid.PlatformStand = false
+
+	local walkAnimTrack = playAnimation(humanoid, "rbxassetid://507777826") -- Replace with your walk animation ID
+
+	-- Compute a position near the target, at stopRadius
+	local destination = getPositionNearTarget(rootPart.Position, targetPos, stopRadius or 4)
+
+	local path = PathfindingService:CreatePath({
+		AgentRadius = 4,
+		AgentHeight = 5,
+		AgentCanJump = true,
+		AgentMaxSlope = 45,
+	})
+	path:ComputeAsync(rootPart.Position, destination)
+
+	if path.Status ~= Enum.PathStatus.Success then
+		warn("[Pathfinding] Failed to compute path")
+		return false
+	end
+
+	for _, waypoint in ipairs(path:GetWaypoints()) do
+		if not npcModel.Parent then return false end
+		humanoid:MoveTo(waypoint.Position)
+		local reached = humanoid.MoveToFinished:Wait()
+		if not reached then
+			warn("[Pathfinding] Failed to reach waypoint")
+			return false
+		end
+		-- If we're within stopRadius of the target, stop early
+		if (waypoint.Position - targetPos).Magnitude <= (stopRadius or 4) then
+			break
+		end
+	end
+
+	walkAnimTrack:Stop()
+	return true
+end
+
+-- Main logic
+local function spawnCustomerForPlayer(player)
+	if playersWithCustomers[player] then return end
+
+	local npc = workspace:FindFirstChild("CustomerNpc")
+	if not npc then warn("❌ CustomerNpc not found") return end
+	if activeNPCs[npc] then warn("❌ Already active") return end
+
+	local humanoid = npc:FindFirstChildOfClass("Humanoid")
+	local rootPart = npc:FindFirstChild("HumanoidRootPart")
+	npc.PrimaryPart = rootPart
+	if not humanoid or not rootPart then warn("❌ Missing parts") return end
+
+	local seat = getSeatForPlayer(player)
+	if not seat then warn("❌ No car seat") return end
+
+	local spawnPos = rootPart.Position
+
+	activeNPCs[npc] = true
+	playersWithCustomers[player] = true
+
+	print("🚗 NPC moving to car")
+	local success = pathfindToTarget(npc, seat.Position, 10) -- 4 studs radius from car seat
+	if not success then
+		activeNPCs[npc] = nil
+		playersWithCustomers[player] = nil
+		return
+	end
+
+	print("✅ At car")
+	task.wait(3)
+	addMoneyToPlayer(player, 10)
+
+	print("🔁 Returning home")
+	pathfindToTarget(npc, spawnPos, 1) -- 4 studs radius from spawn
+	activeNPCs[npc] = nil
+	playersWithCustomers[player] = nil
+end
+
+-- Trigger loop
+RunService.Heartbeat:Connect(function()
+	for _, player in ipairs(Players:GetPlayers()) do
+		local char = player.Character
+		local hrp = char and char:FindFirstChild("HumanoidRootPart")
+		if not hrp then continue end
+
+		local dist = (hrp.Position - sellArea.Position).Magnitude
+		local inZone = dist <= math.max(sellArea.Size.X, sellArea.Size.Z) / 2
+		local seat = getSeatForPlayer(player)
+		local speed = seat and seat.Velocity.Magnitude or 0
+		local honk = seat and seat:FindFirstChild("HonkSound")
+
+		if inZone and honk and honk:IsA("Sound") and honk.IsPlaying and speed <= SPEED_LIMIT and not playersWithCustomers[player] then
+			spawnCustomerForPlayer(player)
+		end
+	end
+end)
+
